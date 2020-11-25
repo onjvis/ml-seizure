@@ -5,7 +5,6 @@ import numpy as np
 from sklearn.linear_model import SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn import preprocessing, metrics
-import xgboost as xgb
 import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from sklearn.model_selection import RandomizedSearchCV
@@ -21,7 +20,7 @@ class SeizureClassification(ABC):
         sz = pickle.load(open(cross_val_file, "rb"))
 
         szr_type_list = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
-        le = preprocessing.LabelEncoder()
+        le = preprocessing.LabelBinarizer()
         le.fit(szr_type_list)
 
         results = []
@@ -46,7 +45,7 @@ class SeizureClassification(ABC):
             print("Fold number ",i, " completed. Score: ", score)
             self._printFoldResults(clf)
         print("Classification report for classifier %s:\n%s\n"
-      % (model, metrics.classification_report(originalLabels, predictedLabels)))
+      % (model, metrics.classification_report(original_labels, predicted_labels)))
         
         print("Avg result: ", np.mean(results) )
     
@@ -82,7 +81,7 @@ class RandomForestClassification(SeizureClassification):
     def _generateModel(self):
         return RandomForestClassifier()
 
-def getFoldData(data_dir, fold_data, dataType, labelEncoder, method = 0):
+def get_fold_data(data_dir, fold_data, dataType, labelEncoder, method = 0):
     X = list()#np.empty(len(fold_data))
     y = list()#np.empty(len(fold_data))
         
@@ -118,7 +117,7 @@ if __name__ == "__main__":
     cross_val_file = args.cross_val_file
     data_dir = args.data_dir
     
-    a = DecisionTreeClassification()
+    a = KNeighboursClassification()
     a.run(cross_val_file, data_dir)
 
 #python3 model.py -c ./data_preparation/cv_split_3_fold_patient_wise_v1.5.2.pkl -d "/media/david/Extreme SSD/Machine Learning/raw_data/v1.5.2/fft_with_time_freq_corr/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"
