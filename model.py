@@ -2,39 +2,44 @@ import argparse
 import os
 import pickle
 import numpy as np
+from sklearn.linear_model import SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn import preprocessing, metrics
-import matplotlib.pyplot as plt 
+import xgboost as xgb
+import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+
 class SeizureClassification(ABC):
     def run(self, cross_val_file, data_dir):
         sz = pickle.load(open(cross_val_file, "rb"))
-    
+
         szr_type_list = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
         le = preprocessing.LabelEncoder()
         le.fit(szr_type_list)
-        
+
         results = []
-        originalLabels = []
-        predictedLabels = []
+        original_labels = []
+        predicted_labels = []
         # Iterate through the folds
         for i, fold_data in enumerate(sz.values()):
-        
             # fold_data is a dictionary with train and val keys
             # Each contains a list of name of files
-        
-            X_train, y_train = getFoldData(data_dir, fold_data, "train", le)
-            X_test, y_test = getFoldData(data_dir, fold_data, "val", le)
-            model = self._generateModel()
+
+            X_train, y_train = get_fold_data(data_dir, fold_data, "train", le)
+            X_test, y_test = get_fold_data(data_dir, fold_data, "val", le)
+            model = self._generate_model()
 
             clf = model.fit(X_train, y_train)
             predicted = model.predict(X_test)
-            originalLabels.extend(y_test)
-            predictedLabels.extend(predicted)
+            original_labels.extend(y_test)
+            predicted_labels.extend(predicted)
             score = clf.score(X_test, y_test)
             results.append(score)
         
@@ -46,16 +51,15 @@ class SeizureClassification(ABC):
         print("Avg result: ", np.mean(results) )
     
     @abstractmethod
-    def _generateModel(self):
+    def _generate_model(self):
         pass
     def _printFoldResults(self, estimator):
         return
         
             
 class KNeighboursClassification(SeizureClassification):
-    def _generateModel(self):
+    def _generate_model(self):
         return KNeighborsClassifier()
-    
 
 class KNeighboursRandomSearchClassification(SeizureClassification):
     def _generateModel(self):
@@ -104,12 +108,11 @@ def getFoldData(data_dir, fold_data, dataType, labelEncoder, method = 0):
             print(X[i].shape)
     y = labelEncoder.transform(y)
     return X, y
-    
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model training")
-    parser.add_argument("-c","--cross_val_file", help="Pkl cross validation file")
+    parser.add_argument("-c", "--cross_val_file", help="Pkl cross validation file")
     parser.add_argument("-d", "--data_dir", help="Folder containing all the preprocessed data")
     args = parser.parse_args()
     cross_val_file = args.cross_val_file
@@ -117,7 +120,6 @@ if __name__ == "__main__":
     
     a = DecisionTreeClassification()
     a.run(cross_val_file, data_dir)
-   
 
 #python3 model.py -c ./data_preparation/cv_split_3_fold_patient_wise_v1.5.2.pkl -d "/media/david/Extreme SSD/Machine Learning/raw_data/v1.5.2/fft_with_time_freq_corr/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"
  #disp = metrics.plot_confusion_matrix(model, X_test, y_test, display_labels=le.classes_)
