@@ -10,6 +10,7 @@ tf.compat.v1.enable_eager_execution()
 #tf.compat.v1.disable_eager_execution()
 #tf.debugging.set_log_device_placement(False)
 
+# Cross validation inpired in https://www.machinecurve.com/index.php/2020/02/18/how-to-use-k-fold-cross-validation-with-keras/
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -30,7 +31,9 @@ EEG_COLUMNS = 660
 
 BATCH_SIZE = 8
 EEG_SHAPE = (EEG_WINDOWS,EEG_COLUMNS)
-EPOCHS = 1
+EPOCHS = 100
+
+
 
 def get_fold_data(data_dir, fold_data, dataType, labelEncoder):
     data = fold_data.get(dataType)
@@ -122,6 +125,13 @@ if __name__ == "__main__":
   logs_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
   tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
+  early_stopping = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss', 
+    verbose=1,
+    patience=5,
+    mode='min',
+    restore_best_weights=True)
+
 
   szr_type_list = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
 
@@ -147,8 +157,12 @@ if __name__ == "__main__":
     # Generate a print
     print('------------------------------------------------------------------------')
     print(f'Training for fold {fold_no} ...')
+
+    # Create the model
     model = create_model()
-    history = model.fit(train_dataset, epochs=EPOCHS, validation_data=val_dataset, shuffle=True, callbacks=[tboard_callback])
+
+    # Train the model
+    history = model.fit(train_dataset, epochs=EPOCHS, validation_data=val_dataset, shuffle=True, callbacks=[tboard_callback, early_stopping])
     
     # Allow GC to collect the datasets. If not, they will be available in the next iteration fo the for loop
     # and won't end up fitting in the RAM
