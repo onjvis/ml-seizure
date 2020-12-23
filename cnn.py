@@ -5,25 +5,19 @@ import pickle
 import sparse, numpy as np
 from datetime import datetime
 from sklearn.preprocessing import LabelBinarizer
-from tensorflow import debugging, test, config
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
-from tensorflow.keras.applications import ResNet50, ResNet50V2, MobileNet, VGG16
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Concatenate
-from tensorflow.keras import Input
 import tensorflow as tf
 #tf.compat.v1.disable_eager_execution()
-debugging.set_log_device_placement(False)
+tf.debugging.set_log_device_placement(False)
 
-device_name = test.gpu_device_name()
+device_name = tf.test.gpu_device_name()
 if not device_name:
   raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
 
-gpus = config.experimental.list_physical_devices('GPU')
+gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
         for gpu in gpus:
-                config.experimental.set_memory_growth(gpu, True)
+                tf.config.experimental.set_memory_growth(gpu, True)
 else:
         raise SystemError("NO GPUS")
 
@@ -60,34 +54,39 @@ BATCH_SIZE_VALIDATION = 100
 BATCH_SIZE_TESTING = 1
 
 
-
+import tensorflow as tf
 def create_model():
-        
-        model = Sequential()
 
+
+        INPUT_SHAPE = (32,660, 1)
         # 1st layer as the lumpsum weights from resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
         # NOTE that this layer will be set below as NOT TRAINABLE, i.e., use it as is
-        eeg_input = Input(shape=(32,660, 1))
-        img_conc = Concatenate()([eeg_input, eeg_input,eeg_input])
+        eeg_input = tf.keras.Input(shape=INPUT_SHAPE)
+        img_conc = tf.keras.layers.Concatenate()([eeg_input, eeg_input,eeg_input])
+        input("After concatenate input")
         #model.add(ResNet50(include_top = False, input_tensor=img_conc, pooling = RESNET50_POOLING_AVERAGE, weights = resnet_weights_path, input_shape=(32,660,1)))
         #model.add(ResNet50V2(include_top = False, input_tensor=img_conc, pooling = RESNET50_POOLING_AVERAGE, input_shape=(32,660,3)))
 
         #model.add(VGG16(include_top = False, input_tensor=img_conc, pooling = RESNET50_POOLING_AVERAGE, input_shape=(32,660,3)))
 
-        model.add(MobileNet(include_top = False, input_tensor=img_conc, pooling = RESNET50_POOLING_AVERAGE, input_shape=(96,660,3)))
+        INPUT_SHAPE = (32,660, 3)
+        base_model = tf.keras.applications.MobileNetV2(input_tensor=img_conc, include_top = False,input_shape=INPUT_SHAPE, pooling = RESNET50_POOLING_AVERAGE)
+        base_model.trainable = False
 
-        # 2nd layer as Dense for 2-class classification, i.e., dog or cat using SoftMax activation
-        model.add(Dense(NUM_CLASSES, activation = DENSE_LAYER_ACTIVATION))
+        preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+        prediction_layer = (tf.keras.layers.Dense(NUM_CLASSES, activation = DENSE_LAYER_ACTIVATION))
+
+        outputs = prediction_layer(base_model)
+
+        model = outputs#tf.keras.Model(inputs =img_conc, outputs=outputs)
 
         # Say not to train first layer (ResNet) model as it is already trained
-        model.layers[0].trainable = False
-        print
         model.summary()
 
-        from tensorflow.keras import optimizers
 
         #sgd = optimizers.SGD(lr = 0.01, decay = 1e-6, momentum = 0.9, nesterov = True)
-        optimizer = optimizers.Adam(lr=0.001)
+        optimizer = tf.keras.optimizers.Adam(lr=0.001)
         model.compile(optimizer = optimizer, loss = OBJECTIVE_FUNCTION, metrics = LOSS_METRICS)
         return model
 

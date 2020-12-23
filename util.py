@@ -77,7 +77,7 @@ def get_fold_data(data_dir, fold_data, dataType, labelEncoder, method = 0):
             X[i] = np.resize(X[i], (minRow, len(X[i][0])))
     elif(method == 3):
         
-        avg = 32# int(average.get_mean())
+        avg = int(average.get_mean())
         print("Avg", avg)
         for i in range(len(X)):
             if(avg > len(X[i])):
