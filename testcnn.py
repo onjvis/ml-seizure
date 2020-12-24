@@ -6,6 +6,10 @@ from datetime import datetime
 import pickle
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.preprocessing import image_dataset_from_directory
+from sklearn import metrics
+import itertools
+import io
+import seaborn as sns
 tf.compat.v1.enable_eager_execution()
 #tf.compat.v1.disable_eager_execution()
 #tf.debugging.set_log_device_placement(False)
@@ -29,9 +33,9 @@ print("GPUS {}", gpus)
 EEG_WINDOWS=156 # this number is the average of rows that the eeg dataset used has. To calculate it, get_fold_data from utils was used
 EEG_COLUMNS = 660
 
-BATCH_SIZE = 8
+BATCH_SIZE = 8 # Batch size 8 seems to be the limit with my machine
 EEG_SHAPE = (EEG_WINDOWS,EEG_COLUMNS)
-EPOCHS = 100
+EPOCHS =100
 
 
 
@@ -118,20 +122,60 @@ def create_model():
                 metrics=['accuracy'])
   return model
 
+def plot_confusion_matrix(cm, class_names):
+    """
+    Returns a matplotlib figure containing the plotted confusion matrix.
+    
+    Args:
+       cm (array, shape = [n, n]): a confusion matrix of integer classes
+       class_names (array, shape = [n]): String names of the integer classes
+    """
+    figure = plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, xticklabels=class_names, yticklabels=class_names, 
+              annot=True, fmt='g')
+    plt.xlabel('Prediction')
+    plt.ylabel('Label')
+    plt.title("Confusion matrix")
+    
+    return figure
 
+def plot_to_image(figure):
+    """
+    Converts the matplotlib plot specified by 'figure' to a PNG image and
+    returns it. The supplied figure is closed and inaccessible after this call.
+    """
+    
+    buf = io.BytesIO()
+    
+    # Use plt.savefig to save the plot to a PNG in memory.
+    plt.savefig(buf, format='png')
+    
+    # Closing the figure prevents it from being displayed directly inside
+    # the notebook.
+    plt.close(figure)
+    buf.seek(0)
+    
+    # Use tf.image.decode_png to convert the PNG buffer
+    # to a TF image. Make sure you use 4 channels.
+    image = tf.image.decode_png(buf.getvalue(), channels=4)
+    
+    # Use tf.expand_dims to add the batch dimension
+    image = tf.expand_dims(image, 0)
+    
+    return image
 
 if __name__ == "__main__":
   # Create a TensorBoard callback
   logs_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-
   tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
   early_stopping = tf.keras.callbacks.EarlyStopping(
     monitor='val_loss', 
     verbose=1,
-    patience=5,
+    patience=3,
     mode='min',
     restore_best_weights=True)
 
+  file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
 
   szr_type_list = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
 
@@ -146,11 +190,11 @@ if __name__ == "__main__":
   test_fold = seizure_folds[-1]
 
   test_dataset = get_test_dataset(data_dir, test_fold, le)    
+  test_labels = np.concatenate([y for x, y in test_dataset], axis=0).argmax(axis=1)
   
   # Define per-fold score containers
   acc_per_fold = []
   loss_per_fold = []
-
   for fold_no, fold_data in enumerate(k_validation_folds):
     train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
     
@@ -176,7 +220,19 @@ if __name__ == "__main__":
     acc_per_fold.append(scores[1] * 100)
     loss_per_fold.append(scores[0])
 
-  
+    print("[INFO] Predicting network and creating confusion matrix...")
+
+    test_pred = np.argmax(model.predict(test_dataset), axis=1)
+    
+    cm = tf.math.confusion_matrix(test_labels, test_pred)
+    figure = plot_confusion_matrix(cm, class_names=le.classes_)
+    cn_image =plot_to_image(figure)
+     # Log the confusion matrix as an image summary.
+    with file_writer_cm.as_default():
+      tf.summary.image(f"Confusion Matrix Fold {fold_no}", cn_image, step=0)
+    
+    
+    
   # == Provide average scores ==
   print('------------------------------------------------------------------------')
   print('Score per fold')
