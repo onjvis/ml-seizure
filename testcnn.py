@@ -26,6 +26,7 @@ else:
 #config.set_visible_devices([], 'GPU')
 print("GPUS {}", gpus)
 
+SZR_CLASSES = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
 
 #physical_devices = tf.config.list_physical_devices('GPU') 
 #tf.config.experimental.set_memory_growth(physical_devices[0], True)
@@ -36,6 +37,18 @@ EEG_COLUMNS = 660
 BATCH_SIZE = 8 # Batch size 8 seems to be the limit with my machine
 EEG_SHAPE = (EEG_WINDOWS,EEG_COLUMNS)
 EPOCHS =100
+
+METRICS = [
+      tf.keras.metrics.TruePositives(name='tp'),
+      tf.keras.metrics.FalsePositives(name='fp'),
+      tf.keras.metrics.TrueNegatives(name='tn'),
+      tf.keras.metrics.FalseNegatives(name='fn'), 
+      tf.keras.metrics.BinaryAccuracy(name='accuracy'),
+      tf.keras.metrics.Precision(name='precision'),
+      tf.keras.metrics.Recall(name='recall'),
+      tf.keras.metrics.AUC(name='auc'),
+]
+
 
 
 
@@ -81,8 +94,10 @@ data_dir = "/home/david/Documents/Machine Learning/raw_data/fft_seizures_wl1_ws_
 cross_val_file = "../seizure-type-classification-tuh/data_preparation/cv_split_3_fold_patient_wise_v1.5.2.pkl"
 
 
-def create_model():
-  #train_dataset = train_dataset.prefetch(buffer_size=AUTOTUNE)
+def create_model(metrics=METRICS, output_bias=None):
+
+  if output_bias is not None:
+    output_bias = tf.keras.initializers.Constant(output_bias)
 
   data_augmentation = tf.keras.Sequential([
     
@@ -103,7 +118,7 @@ def create_model():
   global_average_layer = tf.keras.layers.GlobalAveragePooling2D()
 
 
-  prediction_layer = tf.keras.layers.Dense(7)
+  prediction_layer = tf.keras.layers.Dense(len(SZR_CLASSES), activation="softmax", bias_initializer=output_bias)
 
 
   inputs = tf.keras.Input(shape=EEG_SHAPE + (3,))
@@ -118,8 +133,8 @@ def create_model():
 
   base_learning_rate = 0.0001
   model.compile(optimizer=tf.keras.optimizers.Adam(lr=base_learning_rate),
-                loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-                metrics=['accuracy'])
+                loss=tf.keras.losses.CategoricalCrossentropy(from_logits=False),
+                metrics=metrics)
   return model
 
 def plot_confusion_matrix(cm, class_names):
@@ -166,21 +181,21 @@ def plot_to_image(figure):
 
 if __name__ == "__main__":
   # Create a TensorBoard callback
-  logs_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-  tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
   early_stopping = tf.keras.callbacks.EarlyStopping(
-    monitor='val_loss', 
+    monitor='val_auc', 
     verbose=1,
-    patience=3,
-    mode='min',
+    patience=8,
+    mode='max',
     restore_best_weights=True)
 
+  logs_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+  tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
+  
   file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
 
-  szr_type_list = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
 
   le = LabelBinarizer()
-  le.fit(szr_type_list)
+  le.fit(SZR_CLASSES)
 
   sz = pickle.load(open(cross_val_file, "rb"))
   
@@ -191,11 +206,17 @@ if __name__ == "__main__":
 
   test_dataset = get_test_dataset(data_dir, test_fold, le)    
   test_labels = np.concatenate([y for x, y in test_dataset], axis=0).argmax(axis=1)
-  
+  currentTime = datetime.now().strftime("%Y%m%d-%H%M%S")
   # Define per-fold score containers
   acc_per_fold = []
   loss_per_fold = []
   for fold_no, fold_data in enumerate(k_validation_folds):
+    logs_dir = f"logs/fit/{currentTime}/fold_{fold_no}"  
+    tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
+  
+    file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
+
+
     train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
     
     # Generate a print
@@ -229,7 +250,7 @@ if __name__ == "__main__":
     cn_image =plot_to_image(figure)
      # Log the confusion matrix as an image summary.
     with file_writer_cm.as_default():
-      tf.summary.image(f"Confusion Matrix Fold {fold_no}", cn_image, step=0)
+      tf.summary.image(f"Confusion Matrix", cn_image, step=0)
     
     
     
