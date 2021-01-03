@@ -2,15 +2,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import tensorflow as tf
+import tensorflow_addons as tfa
 from datetime import datetime
 import pickle
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.preprocessing import image_dataset_from_directory
-from sklearn import metrics
+from sklearn import metrics,utils
 import itertools
-import io
 import seaborn as sns
-tf.compat.v1.enable_eager_execution()
+import math
+from tensorflow_utils import plot_to_image
+from tensorboard.plugins.hparams import api as hp
+from cnn_params import *
+
+#tf.compat.v1.enable_eager_execution()
 #tf.compat.v1.disable_eager_execution()
 #tf.debugging.set_log_device_placement(False)
 
@@ -23,30 +28,22 @@ if gpus:
 else:
         raise SystemError("NO GPUS")
 
+
 #config.set_visible_devices([], 'GPU')
 print("GPUS {}", gpus)
 
-SZR_CLASSES = ['TNSZ', 'SPSZ', 'ABSZ', 'TCSZ', 'CPSZ', 'GNSZ', 'FNSZ']
 
 #physical_devices = tf.config.list_physical_devices('GPU') 
 #tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
-EEG_WINDOWS=156 # this number is the average of rows that the eeg dataset used has. To calculate it, get_fold_data from utils was used
-EEG_COLUMNS = 660
-
-BATCH_SIZE = 8 # Batch size 8 seems to be the limit with my machine
-EEG_SHAPE = (EEG_WINDOWS,EEG_COLUMNS)
-EPOCHS =100
 
 METRICS = [
-      tf.keras.metrics.TruePositives(name='tp'),
-      tf.keras.metrics.FalsePositives(name='fp'),
-      tf.keras.metrics.TrueNegatives(name='tn'),
-      tf.keras.metrics.FalseNegatives(name='fn'), 
-      tf.keras.metrics.BinaryAccuracy(name='accuracy'),
+      tf.keras.metrics.CategoricalAccuracy(name='accuracy'),
       tf.keras.metrics.Precision(name='precision'),
       tf.keras.metrics.Recall(name='recall'),
       tf.keras.metrics.AUC(name='auc'),
+      tfa.metrics.F1Score(name='f1_score_macro', average='macro', num_classes=7),
+      tfa.metrics.F1Score(name='f1_score_weighted', average='weighted', num_classes=7)
 ]
 
 
@@ -66,9 +63,14 @@ def get_fold_data(data_dir, fold_data, dataType, labelEncoder):
           X[i] = np.pad(seizure.data, ((0, EEG_WINDOWS -length), (0,0)))
         else:
           X[i] = np.resize(seizure.data, (EEG_WINDOWS, len(seizure.data[0])))
-    y = labelEncoder.transform(y)
+    
+        
+    if labelEncoder != None:
+      y = labelEncoder.transform(y)
+
     return X, y
-  
+
+
 @tf.function
 def resize_eeg(data, label):
   return tf.stack([data,data,data], axis=-1), label#tf.py_function(lambda: tf.convert_to_tensor(np.stack([data.numpy()]*3, axis=-1), dtype=data.dtype), label, Tout=[tf.Tensor, type(label)] )
@@ -90,11 +92,70 @@ def get_test_dataset(data_dir, fold_data, le):
   return train_dataset.concatenate(val_dataset)
 
 
-data_dir = "/home/david/Documents/Machine Learning/raw_data/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"
+data_dir ="/home/david/Documents/Machine Learning/raw_data/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"#"/media/david/Extreme SSD1/Machine Learning/raw_data/fft_with_time_freq_corr/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_24" 
 cross_val_file = "../seizure-type-classification-tuh/data_preparation/cv_split_3_fold_patient_wise_v1.5.2.pkl"
 
 
+def calculate_weights(le):
+  sz = pickle.load(open(cross_val_file, "rb"))
+
+  y_labels = list()
+  for data in sz.values():
+    _, y_train = get_fold_data(data_dir, data, "train", None)
+    _, y_val = get_fold_data(data_dir, data, "val", None)
+    y_labels += y_val + y_train
+  
+  class_weights = utils.class_weight.compute_class_weight('balanced',
+                                                 classes=le.classes_,
+                                                 y=y_labels)
+
+  return dict(enumerate(class_weights))
+  
+
+  
+def calculate_dataset_min_max():
+  def calcMax(currMax, data):
+    valMax = np.amax(data)
+    if(valMax >  currMax):
+      return valMax
+    return currMax
+  def calcMin(currMin, data):
+    valMin = np.amin(data)
+    if(valMin <  currMin):
+      return valMin
+    return currMin
+
+  sz = pickle.load(open(cross_val_file, "rb"))
+  max = -math.inf
+  min = math.inf
+  for data in sz.values():
+    X_train, y_train = get_fold_data(data_dir, data, "train", None)
+    X_val, y_val = get_fold_data(data_dir, data, "val", None)
+      
+    max = calcMax(max, X_train)
+    max = calcMax(max, X_val)
+    min = calcMin(min, X_train)
+    min = calcMin(min, X_val)
+  
+  return min, max
+
+
+def preprocess_input(x, min=DATASET_MIN,max=DATASET_MAX):
+  """
+  Preprocesses a tensor encoding a batch of eeg data between -1 and 1
+  Based on https://github.com/tensorflow/tensorflow/blob/v2.4.0/tensorflow/python/keras/applications/imagenet_utils.py#L103-L119
+  """
+  #min, max = calculate_dataset_min_max()
+  x += DATASET_MIN
+  x /= DATASET_MAX/2.
+  x -= 1.
+
+  return x
+
+from tensorflow.keras.mixed_precision import experimental as mixed_precision
 def create_model(metrics=METRICS, output_bias=None):
+  
+  #TODO: look into mixed precision to increase time performance https://www.tensorflow.org/g[]uide/mixed_precision
 
   if output_bias is not None:
     output_bias = tf.keras.initializers.Constant(output_bias)
@@ -103,7 +164,6 @@ def create_model(metrics=METRICS, output_bias=None):
     
   ])
 
-  preprocess_input = tf.keras.applications.resnet_v2.preprocess_input
 
 
   # Create the base model from the pre-trained model MobileNet V2
@@ -123,15 +183,16 @@ def create_model(metrics=METRICS, output_bias=None):
 
   inputs = tf.keras.Input(shape=EEG_SHAPE + (3,))
   x = data_augmentation(inputs)
-  #x = preprocess_input(x) # Apparently adding it reduces performance
+  #x = preprocess_input(x) 
   x = base_model(x, training=False)
+
   x = global_average_layer(x)
   x = tf.keras.layers.Dropout(0.2)(x)
   outputs = prediction_layer(x)
   model = tf.keras.Model(inputs, outputs)
   model.summary()
 
-  base_learning_rate = 0.0001
+  base_learning_rate = 0.1#0.0001
   model.compile(optimizer=tf.keras.optimizers.Adam(lr=base_learning_rate),
                 loss=tf.keras.losses.CategoricalCrossentropy(from_logits=False),
                 metrics=metrics)
@@ -154,52 +215,62 @@ def plot_confusion_matrix(cm, class_names):
     
     return figure
 
-def plot_to_image(figure):
-    """
-    Converts the matplotlib plot specified by 'figure' to a PNG image and
-    returns it. The supplied figure is closed and inaccessible after this call.
-    """
-    
-    buf = io.BytesIO()
-    
-    # Use plt.savefig to save the plot to a PNG in memory.
-    plt.savefig(buf, format='png')
-    
-    # Closing the figure prevents it from being displayed directly inside
-    # the notebook.
-    plt.close(figure)
-    buf.seek(0)
-    
-    # Use tf.image.decode_png to convert the PNG buffer
-    # to a TF image. Make sure you use 4 channels.
-    image = tf.image.decode_png(buf.getvalue(), channels=4)
-    
-    # Use tf.expand_dims to add the batch dimension
-    image = tf.expand_dims(image, 0)
-    
-    return image
+
+
+
+
+
+def train_model(hparams, logs_dir, le, weights):
+  tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
+
+  train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
+
+  # Generate a print
+  print('------------------------------------------------------------------------')
+  print(f'Training for fold {fold_no} ...')
+
+  # Create the model
+  model = create_model()
+
+  # Train the model
+  history = model.fit(train_dataset, epochs=EPOCHS, validation_data=val_dataset, class_weight=weights, callbacks=[tboard_callback])
+  
+  # Allow GC to collect the datasets. If not, they will be available in the next iteration fo the for loop
+  # and won't end up fitting in the RAM
+  #train_dataset = None
+  #val_dataset = None
+  return model
+  
+def save_confusion_matrix(test_labels, test_pred, classes, logs_dir):
+  file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
+  cm = tf.math.confusion_matrix(test_labels, test_pred)
+  figure = plot_confusion_matrix(cm, class_names=classes)
+  cn_image =plot_to_image(figure)
+  # Log the confusion matrix as an image summary.
+  with file_writer_cm.as_default():
+    tf.summary.image("Confusion Matrix", cn_image, step=1)
+  
+
 
 if __name__ == "__main__":
   # Create a TensorBoard callback
   early_stopping = tf.keras.callbacks.EarlyStopping(
     monitor='val_auc', 
     verbose=1,
-    patience=8,
+    patience=5,
     mode='max',
     restore_best_weights=True)
 
-  logs_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-  tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
   
-  file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
-
-
   le = LabelBinarizer()
   le.fit(SZR_CLASSES)
+  weights = calculate_weights(le)
+  print("Classes:", le.classes_)
+  print("Class weights: ", weights)
 
-  sz = pickle.load(open(cross_val_file, "rb"))
+  seizure_folds = pickle.load(open(cross_val_file, "rb"))
   
-  seizure_folds = list(sz.values())
+  seizure_folds = list(seizure_folds.values())
 
   k_validation_folds = seizure_folds[:-1] # TODO: Choose which dataset will be the test randomly
   test_fold = seizure_folds[-1]
@@ -212,45 +283,29 @@ if __name__ == "__main__":
   loss_per_fold = []
   for fold_no, fold_data in enumerate(k_validation_folds):
     logs_dir = f"logs/fit/{currentTime}/fold_{fold_no}"  
-    tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
   
-    file_writer_cm = tf.summary.create_file_writer(logs_dir + '/cm') # Writer for the confusion matrix
 
-
-    train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
-    
-    # Generate a print
-    print('------------------------------------------------------------------------')
-    print(f'Training for fold {fold_no} ...')
-
-    # Create the model
-    model = create_model()
-
-    # Train the model
-    history = model.fit(train_dataset, epochs=EPOCHS, validation_data=val_dataset, shuffle=True, callbacks=[tboard_callback, early_stopping])
-    
-    # Allow GC to collect the datasets. If not, they will be available in the next iteration fo the for loop
-    # and won't end up fitting in the RAM
-    train_dataset = None
-    val_dataset = None
-    
+    model = train_model(None, logs_dir, le, weights)
     # evaluate the model
     print("[INFO] evaluating network...")
     scores = model.evaluate(test_dataset, verbose=0)
+
+
+    with tf.summary.create_file_writer(logs_dir + '/run').as_default():
+      tf.summary.scalar(model.metrics_names[5], scores[5], step=1)
+      tf.summary.scalar(model.metrics_names[6], scores[6], step=1)
+
+      
     print(f'Score for fold {fold_no}: {model.metrics_names[0]} of {scores[0]}; {model.metrics_names[1]} of {scores[1]*100}%')
     acc_per_fold.append(scores[1] * 100)
     loss_per_fold.append(scores[0])
 
+    
     print("[INFO] Predicting network and creating confusion matrix...")
 
     test_pred = np.argmax(model.predict(test_dataset), axis=1)
+    save_confusion_matrix(test_labels, test_pred, le.classes_, logs_dir)
     
-    cm = tf.math.confusion_matrix(test_labels, test_pred)
-    figure = plot_confusion_matrix(cm, class_names=le.classes_)
-    cn_image =plot_to_image(figure)
-     # Log the confusion matrix as an image summary.
-    with file_writer_cm.as_default():
-      tf.summary.image(f"Confusion Matrix", cn_image, step=0)
     
     
     
