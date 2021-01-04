@@ -11,10 +11,10 @@ from sklearn import metrics,utils
 import itertools
 import seaborn as sns
 import math
-from tensorflow_utils import plot_to_image
+from tensorflow_utils import *
 from tensorboard.plugins.hparams import api as hp
 from cnn_params import *
-
+import pandas as pd
 #tf.compat.v1.enable_eager_execution()
 #tf.compat.v1.disable_eager_execution()
 #tf.debugging.set_log_device_placement(False)
@@ -76,27 +76,56 @@ def resize_eeg(data, label):
   return tf.stack([data,data,data], axis=-1), label#tf.py_function(lambda: tf.convert_to_tensor(np.stack([data.numpy()]*3, axis=-1), dtype=data.dtype), label, Tout=[tf.Tensor, type(label)] )
 
 def get_dataset(X, y):
-  return tf.data.Dataset.from_tensor_slices((X, y)).map(resize_eeg, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(BATCH_SIZE).prefetch(2)
+  return tf.data.Dataset.from_tensor_slices((X, y)).map(resize_eeg, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
 
-def get_fold_datasets(data_dir, fold_data, le):
+def get_fold_datasets(data_dir, fold_data, le, class_probs=None, oversample=False, undersample=False):
   X_train, y_train = get_fold_data(data_dir, fold_data, "train", le)
   X_val, y_val = get_fold_data(data_dir, fold_data, "val", le)
 
   print("DIMENSIONS: ",len(X_train), ",", len(X_train[0]))
-    
-  return get_dataset(X_train, y_train), get_dataset(X_val, y_val) 
+  train_dataset = get_dataset(X_train, y_train)
+  class_target_probs = None
+  if class_probs:
+    class_target_probs = {label_name: 0.5 for label_name in class_probs}
+    class_target_probs = tf.lookup.StaticHashTable(
+      tf.lookup.KeyValueTensorInitializer(tf.constant(list(class_target_probs.keys())), tf.constant(list(class_target_probs.values()), dtype=tf.dtypes.float64)),
+      default_value=0
+    )
+    class_probs = tf.lookup.StaticHashTable(
+      tf.lookup.KeyValueTensorInitializer(tf.constant(list(class_probs.keys())), tf.constant(list(class_probs.values()), dtype=tf.dtypes.float64)),
+      default_value=0
+    )
+
+  if oversample:
+    #train_dataset = train_dataset.map(, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    train_dataset = train_dataset.flat_map(lambda x, y: tf.data.Dataset.from_tensors((x, y)).repeat(oversample_classes(y,class_probs, class_target_probs)))
+  if undersample:
+    #train_dataset = train_dataset.map()
+    train_dataset =train_dataset.filter(lambda x,y: undersampling_filter(x,y, class_probs, class_target_probs))
+  
+  if oversample or undersample:
+    train_dataset = train_dataset.shuffle(100).repeat()
+
+  train_dataset = train_dataset.batch(BATCH_SIZE).prefetch(PREFETCH)
+  val_dataset = get_dataset(X_val, y_val).batch(BATCH_SIZE).prefetch(PREFETCH)
+
+  return train_dataset,  val_dataset
 
 def get_test_dataset(data_dir, fold_data, le):
-  train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
-  return train_dataset.concatenate(val_dataset)
+  X_train, y_train = get_fold_data(data_dir, fold_data, "train", le)
+  X_val, y_val = get_fold_data(data_dir, fold_data, "val", le)
+
+  train_dataset = get_dataset(X_train, y_train)
+  val_dataset = get_dataset(X_val, y_val)
+  return train_dataset.concatenate(val_dataset).batch(BATCH_SIZE).prefetch(PREFETCH)
 
 
-data_dir ="/home/david/Documents/Machine Learning/raw_data/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"#"/media/david/Extreme SSD1/Machine Learning/raw_data/fft_with_time_freq_corr/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_24" 
+data_dir ="/media/david/Extreme SSD1/Machine Learning/raw_data/fft_with_time_freq_corr/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_24" #"/home/david/Documents/Machine Learning/raw_data/fft_seizures_wl1_ws_0.5_sf_250_fft_min_1_fft_max_12"
 cross_val_file = "../seizure-type-classification-tuh/data_preparation/cv_split_3_fold_patient_wise_v1.5.2.pkl"
 
 
-def calculate_weights(le):
+def calculate_weights_and_probs(le):
   sz = pickle.load(open(cross_val_file, "rb"))
 
   y_labels = list()
@@ -105,14 +134,38 @@ def calculate_weights(le):
     _, y_val = get_fold_data(data_dir, data, "val", None)
     y_labels += y_val + y_train
   
+  unique, counts = np.unique(y_labels, return_counts=True)
+  
+
+  total = sum(counts)
+  probs = dict(zip(np.argmax(le.transform(unique), axis=1), counts))
+  probs = {key : probs[key]/total for key in probs}
   class_weights = utils.class_weight.compute_class_weight('balanced',
                                                  classes=le.classes_,
                                                  y=y_labels)
 
-  return dict(enumerate(class_weights))
+  return dict(enumerate(class_weights)), probs
   
 
-  
+def plot_dataset_dist(dataset, probs, le):
+  data = {i : 0 for i in le.classes_}
+  for _, y in dataset.unbatch().take(5000).as_numpy_iterator():
+    y = np.argmax(y, axis=-1)
+    data[le.classes_[y]] += 1
+
+  total = sum(data.values())
+
+  aug_probs = {key : data[key]/total for key in data}
+
+  probs_dict = {
+    "augmented_prob": aug_probs,
+    "real_prob": {le.classes_[key]: probs[key] for key in probs}
+  }
+  print(probs_dict["real_prob"])
+  df = pd.DataFrame(probs_dict).plot(kind="bar")
+ 
+  plt.show()
+ 
 def calculate_dataset_min_max():
   def calcMax(currMax, data):
     valMax = np.amax(data)
@@ -220,11 +273,12 @@ def plot_confusion_matrix(cm, class_names):
 
 
 
-def train_model(hparams, logs_dir, le, weights):
+def train_model(hparams, logs_dir, le, weights, class_probs = None):
   tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs_dir,histogram_freq = 1,profile_batch = '490,510')  
 
-  train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le)
+  train_dataset, val_dataset = get_fold_datasets(data_dir, fold_data, le, class_probs, True, True)
 
+  #plot_dataset_dist(train_dataset, class_probs, le)
   # Generate a print
   print('------------------------------------------------------------------------')
   print(f'Training for fold {fold_no} ...')
@@ -233,7 +287,7 @@ def train_model(hparams, logs_dir, le, weights):
   model = create_model()
 
   # Train the model
-  history = model.fit(train_dataset, epochs=EPOCHS, validation_data=val_dataset, class_weight=weights, callbacks=[tboard_callback])
+  history = model.fit(train_dataset, epochs=EPOCHS, steps_per_epoch=np.ceil(2200/BATCH_SIZE), validation_data=val_dataset, class_weight=weights, callbacks=[tboard_callback])
   
   # Allow GC to collect the datasets. If not, they will be available in the next iteration fo the for loop
   # and won't end up fitting in the RAM
@@ -264,9 +318,11 @@ if __name__ == "__main__":
   
   le = LabelBinarizer()
   le.fit(SZR_CLASSES)
-  weights = calculate_weights(le)
+  weights, probs = calculate_weights_and_probs(le)
   print("Classes:", le.classes_)
   print("Class weights: ", weights)
+  print("Probs: ", probs)
+
 
   seizure_folds = pickle.load(open(cross_val_file, "rb"))
   
@@ -285,7 +341,7 @@ if __name__ == "__main__":
     logs_dir = f"logs/fit/{currentTime}/fold_{fold_no}"  
   
 
-    model = train_model(None, logs_dir, le, weights)
+    model = train_model(None, logs_dir, le, weights, probs)
     # evaluate the model
     print("[INFO] evaluating network...")
     scores = model.evaluate(test_dataset, verbose=0)
