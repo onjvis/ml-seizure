@@ -24,7 +24,7 @@ import warnings
 
 seizure_type_data = collections.namedtuple('seizure_type_data', ['patient_id','seizure_type', 'data'])
 
-def convert_to_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
+def create_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
     type_data = pickle.load(open(file_path, 'rb'))
@@ -45,7 +45,7 @@ def convert_to_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampli
 
     return named_data,os.path.basename(file_path)
 
-def convert_to_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
+def create_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
     type_data = pickle.load(open(file_path, 'rb'))
@@ -66,11 +66,10 @@ def convert_to_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampli
 
     return named_data,os.path.basename(file_path)
 
-def convert_to_d(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
+def create_d(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
     type_data = pickle.load(open(file_path, 'rb'))
-    #D = [|FT|, |S1|, |S2|]
     pipeline1 = Pipeline([Normalise()])
     pipeline2 = Pipeline([Concatenation()])
     pipeline3 = Pipeline([RGB_0_255()])
@@ -165,9 +164,16 @@ def main():
                 '''
 
                 for file_path in sorted(fpaths):
-                    converted_data,file_name_base = convert_to_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency,file_path)
+                    converted_data,file_name_base = create_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency,file_path)
                     if converted_data.data.ndim == 3:
                         pickle.dump(converted_data, open(os.path.join(save_data_dir, file_name_base), 'wb'))
+                    converted_data,file_name_base = create_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency,file_path)
+                    if converted_data.data.ndim == 3:
+                        pickle.dump(converted_data, open(os.path.join(save_data_dir, file_name_base), 'wb'))
+                    converted_data,file_name_base = create_d(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency,file_path)
+                    if converted_data.data.ndim == 3:
+                        pickle.dump(converted_data, open(os.path.join(save_data_dir, file_name_base), 'wb'))
+                    
 
 
 
