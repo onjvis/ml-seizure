@@ -24,6 +24,7 @@ import warnings
 
 seizure_type_data = collections.namedtuple('seizure_type_data', ['patient_id','seizure_type', 'data'])
 
+#Saliency map S1
 def create_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
@@ -45,6 +46,7 @@ def create_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_f
 
     return named_data,os.path.basename(file_path)
 
+#Saliency map S2
 def create_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
@@ -66,29 +68,39 @@ def create_s2(window_length, window_step, fft_min_freq, fft_max_freq, sampling_f
 
     return named_data,os.path.basename(file_path)
 
+#RGB-encoded spectogram D
 def create_d(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency, file_path):
 
     warnings.filterwarnings("ignore")
     type_data = pickle.load(open(file_path, 'rb'))
+    #Three of these pipelines are needed, as concatenation takes a different kind of parameter (three maps)
     pipeline1 = Pipeline([Normalise()])
     pipeline2 = Pipeline([Concatenation()])
     pipeline3 = Pipeline([RGB_0_255()])
+    
+    #The three feature maps
     data_ft = type_data.data
     data_s1 = type_data.s1
     data_s2 = type_data.s2
+    
     start, step = 0, int(np.floor(window_step * sampling_frequency))
     stop = start + int(np.floor(window_length * sampling_frequency))
     d_data = []
 
     while stop < data_ft.shape[1]:
+        #Window definitions, the maps are of same size & shape so 1 looper can be used for all
         window_ft = data_ft[:, start:stop]
         window_s1 = data_s1[:, start:stop]
         window_s2 = data_s2[:, start:stop]
+        #Normalise each window value
         window_ft_norm = pipeline1.apply(window_ft)
         window_s1_norm = pipeline1.apply(window_s1)
         window_s2_norm = pipeline1.apply(window_s2)
+        #Concatenate normalised values
         d_norm = pipeline2.apply(window_ft_norm, window_s1_norm, window_s2_norm)
+        #RGB 0-255 conversion
         d_rgb = pipeline3.apply(d_norm)
+        
         d_data.append(d_rgb)
         start, stop = start + step, stop + step
 
@@ -97,32 +109,33 @@ def create_d(window_length, window_step, fft_min_freq, fft_max_freq, sampling_fr
 
     return named_data,os.path.basename(file_path)
 
+#These here down below are the same as in researchers' code to simplify usage
 def main():
-    parser = argparse.ArgumentParser(description='Generate Saliency map S1 from feature map FT')
+    parser = argparse.ArgumentParser(description='Generate Saliency maps and spectogram from preprocessed data')
 
     if platform.system() == 'Linux':
         parser.add_argument('-l','--save_data_dir', default='/slow1/out_datasets/tuh/seizure_type_classification/',
-                            help='path to output prediction')
+                            help='path to output updated data')
         parser.add_argument('-b','--base_save_data_dir', default='/fast1/out_datasets/tuh/seizure_type_classification/',
-                            help='path to output prediction')
+                            help='path to output updated data')
     elif platform.system() == 'Darwin':
         parser.add_argument('-l','--save_data_dir', default='/Users/jbtang/datasets/TUH/eeg_seizure/',
-                            help='path to output prediction')
+                            help='path to output updated data')
         parser.add_argument('-b','--preprocess_data_dir',
                             default='/Users/jbtang/datasets/TUH/output/seizures_type_classification/',
-                            help='path to output prediction')
+                            help='path to output updated data')
     else:
         print('Unknown OS platform %s' % platform.system())
         exit()
 
     parser.add_argument('-v', '--tuh_eeg_szr_ver',
                         default='v1.4.0',
-                        help='path to output prediction')
+                        help='path to output updated data')
 
     args = parser.parse_args()
     tuh_eeg_szr_ver = args.tuh_eeg_szr_ver
 
-    save_data_dir = os.path.join(args.save_data_dir,tuh_eeg_szr_ver,'saliencyOne')
+    save_data_dir = os.path.join(args.save_data_dir,tuh_eeg_szr_ver,'spectogram')
     preprocess_data_dir = os.path.join(args.preprocess_data_dir,tuh_eeg_szr_ver,'fft')
 
     fnames = []
@@ -162,7 +175,8 @@ def main():
                         pickle.dump(item, open( os.path.join(save_data_dir, file_name_base), 'wb'))
                         count += 1
                 '''
-
+                
+                #Create each map in order, then create spectogram D
                 for file_path in sorted(fpaths):
                     converted_data,file_name_base = create_s1(window_length, window_step, fft_min_freq, fft_max_freq, sampling_frequency,file_path)
                     if converted_data.data.ndim == 3:
@@ -174,11 +188,5 @@ def main():
                     if converted_data.data.ndim == 3:
                         pickle.dump(converted_data, open(os.path.join(save_data_dir, file_name_base), 'wb'))
                     
-
-
-
-
 if __name__ == '__main__':
     main()
-
-

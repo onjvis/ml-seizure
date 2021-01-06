@@ -58,7 +58,7 @@ class IFFT():
     Job: Inverse Fourier transform F-1
     """
     def get_name(self):
-        return "inverse fourier"
+        return "inverse-fourier"
 
     def apply(self, data):
         axis = data.ndim - 1
@@ -69,7 +69,7 @@ class Smooth_Gaussian():
     Job: Smooth the saliency feature map using a Gaussian kernel.
     """
     def get_name(self):
-        return "inverse fourier"
+        return "smooth-gaussian-kernel"
 
     def apply(self, data):
         F1_padded = scipy.pad(array=data, pad_width=[1, 1], mode='constant', constant_values=0)
@@ -96,7 +96,7 @@ class Center_surround_diff():
     center-surround differences.
     """
     def get_name(self):
-        return "Compute center surround differences"
+        return "compute-center-surround-differences"
 
     def apply(self, data):
         FT = data
@@ -129,7 +129,7 @@ class Normalise():
     Job: Normalise a saliency map
     """
     def get_name(self):
-        return "Saliency map normaliser"
+        return "saliency-map-normaliser"
 
     def apply(self, data):
         map_max, map_min = data.max(), data.min()
@@ -152,7 +152,7 @@ class Concatenation():
     Job: Concatenate normalised maps
     """
     def get_name(self):
-        return "Concatenate maps"
+        return "concatenate-maps"
 
     def apply(self, FT_data, S1_data, S2_data):
         D = (FT_data*S1_data*S2_data)
