@@ -30,7 +30,7 @@ def plot_to_image(figure, add_dim = True):
 
 # https://github.com/tensorflow/tensorflow/issues/14451
 # if equal to 0 then oversample_classes() always returns 1
-def oversample_classes(label, label_probs, label_target_probs, oversampling_coef = 0.5):
+def oversample_classes(label, label_probs, label_target_probs, oversampling_coef = 0.2):
     """
     Returns the number of copies of given example
     """
@@ -61,7 +61,7 @@ def oversample_classes(label, label_probs, label_target_probs, oversampling_coef
 
 
 # undersampling coef if equal to 0 then oversampling_filter() always returns True
-def undersampling_filter(value, label, label_probs, label_target_probs,undersampling_coef = 0.7):
+def undersampling_filter(value, label, label_probs, label_target_probs,undersampling_coef = 0.8):
     """
     Computes if given example is rejected or not.
     """
